@@ -5,6 +5,7 @@ const { v4: uuidv4 } = require('uuid');
 const User  =  require("../model/UserModel");
 const { checkTxStatus } = require('../lib/CheckTxStatus');
 const { sendEmail, sendMail2 } = require('../helper/sendEmail');
+const Invoice = require('../model/invoice-schema');
 
 
 // @desc    Create payment link
@@ -64,40 +65,33 @@ const createPaymentLink = asyncHandler(async (req, res) => {
 
 
 
-// @desc    Generate payment session
-// @route   POST /api/payment/start-session
+// @desc    Initiate transaction session
+// @route   POST /api/payment/initiate-session
 // @access  Public
-/*const startPaymentSession = asyncHandler(async (req, res) => {
-  const { linkId, payerInfo, amount } = req.body;
+const initiatePaymentSession = asyncHandler(async (req, res) => {
+  const io = req.app.get('socketio');
 
-  const paymentLink = await PaymentLink.findOne({ linkId });
+  const {sessionId}  = req.params
 
-  if (!paymentLink) {
-    res.status(404);
-    throw new Error('Payment link not found');
-  }
+  const paymentSession = await PaymentSession.findOne({ sessionId }).populate('paymentLinkId');
 
-  if (paymentLink.paymentType === 'fixed' && amount !== paymentLink.amount) {
-    res.status(400);
-    throw new Error('Invalid amount for fixed payment type');
-  }
+    if(! paymentSession){
+      res.status(400).json({message : "no session found"})
 
-  const sessionId = uuidv4();
+      throw new Error("No session found")
+    }
 
-  const paymentSession = new PaymentSession({
-    linkId: paymentLink._id,
-    sessionId,
-    payerInfo,
-    amount,
-  });
+    io.emit('paymentStatus', {
+      status : "PENDING",
+      sessionId : sessionId
+    });
 
-  await paymentSession.save();
 
   res.status(201).json({
-    message: 'Payment session started',
+    message: 'Payment session initiated',
     sessionId,
   });
-});*/
+});
 
 
 // @desc    Generate payment session ID
@@ -230,8 +224,9 @@ const handleCheckout = asyncHandler(async (req, res) => {
        return `${p1}.${p2.replace(/\./g, '-')}`;
      });
      
-       const  txResult  =  await  checkTxStatus(formattedTxId)
+       const  txResult  =  await  checkTxStatus(transactionHash)
       console.log("the result status",  txResult)
+      console.log("transaction hash", transactionHash)
 
     if (txResult === 'SUCCESS') {
      
@@ -473,6 +468,27 @@ const getPaymentLinksByUserId = asyncHandler(async (req, res) => {
   }
 });
 
+// Controller function to get payment links by user ID
+const getInvoicesByUserId = asyncHandler(async (req, res) => {
+  const { userId } = req.params;
+
+  try {
+    // Fetch all payment links created by the specified user
+    const  invoices = await Invoice.find({ userId }).populate("customer");
+
+    // If no payment links are found, return an empty array
+    if (! invoices) {
+      return res.status(404).json({ message: 'No invoices found for this user.' });
+    } 
+
+    // Return the payment links
+    res.status(200).send(invoices);
+  } catch (error) {
+    // Handle any errors that may occur
+    res.status(500).json({ message: error.message });
+  }
+});
+
 
 
 
@@ -483,5 +499,7 @@ module.exports = { createPaymentLink,  generateSessionId,
   getPyament, getSession,
    getPaymentLinkSessions,
    getPaymensByUserId,
-   getPaymentLinksByUserId
+   getPaymentLinksByUserId,
+   initiatePaymentSession,
+   getInvoicesByUserId
   }; 

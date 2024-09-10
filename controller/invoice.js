@@ -1,0 +1,334 @@
+const asyncHandler =  require("express-async-handler")
+const  Invoice  =  require("../model/invoice-schema")
+
+
+// Helper function to generate unique invoice number
+const generateInvoiceNumber = async () => {
+    const lastInvoice = await Invoice.findOne().sort({ createdAt: -1 });
+    const lastInvoiceNumber = lastInvoice ? parseInt(lastInvoice.invoiceNumber, 10) : 0;
+    const nextInvoiceNumber = lastInvoiceNumber + 1;
+    return String(nextInvoiceNumber).padStart(6, '0'); // Pads the number with zeros (e.g., 000001)
+  };
+  
+  // Helper function to calculate due date based on user's selection
+  const calculateDueDate = (selection) => {
+    const now = new Date();
+    switch (selection) {
+      case 'tomorrow':
+        return new Date(now.setDate(now.getDate() + 1));
+      case 'next_week':
+        return new Date(now.setDate(now.getDate() + 7));
+      case 'next_month':
+        return new Date(now.setMonth(now.getMonth() + 1));
+      default:
+        return now; // If no valid selection, return current date
+    }
+  };
+  
+  // Controller function to create an invoice
+  const createInvoice = async (req, res) => {
+    try {
+      const {userId,  customer, items, dueDate, paymentMethod, memo, tax } = req.body;
+  
+      // Validate required fields
+      if (!userId || !customer  || !items || ! dueDate) {
+        return res.status(400).json({ message: 'All required fields must be filled.' });
+      }
+  
+      // Generate unique invoice number
+      const invoiceNumber = await generateInvoiceNumber();
+  
+      // Calculate subtotal and total amounts
+      const subtotal = items.reduce((sum, item) => sum + (item.quantity * item.price), 0);
+      //const tax = subtotal * 0.15; // Example: 15% tax, adjust as per your need
+      const totalAmount = subtotal + tax;
+  
+
+         console.log("the  selected due date", dueDate)
+      // Generate due date based on the user's selection (e.g., tomorrow, next week, etc.)
+      const dueDateSelection = calculateDueDate(dueDate);
+  
+      // Create the invoice
+      const newInvoice = new Invoice({
+        userId,
+        invoiceNumber,
+         customer,
+        items,
+        subtotal,
+        tax,
+        totalAmount,
+        status: 'pending', // Default status for new invoices
+        dueDate : dueDateSelection,
+        paymentMethod,
+        memo,
+      });
+  
+      // Save the invoice to the database
+      await newInvoice.save();
+  
+      // Send success response
+      return res.status(201).json({
+        message: 'Invoice created successfully!',
+        invoice: newInvoice,
+      });
+    } catch (error) {
+      console.error('Error creating invoice:', error);
+      return res.status(500).json({ message: 'Server error. Please try again later.' });
+    }
+  };
+
+  // Controller function to get payment links by user ID
+const getInvoicesByUserId = asyncHandler(async (req, res) => {
+  const { userId } = req.params;
+
+  try {
+    // Fetch all payment links created by the specified user
+    const  invoices = await Invoice.find({ userId }).populate("customer");
+
+    // If no payment links are found, return an empty array
+    if (! invoices) {
+      return res.status(404).json({ message: 'No invoices found for this user.' });
+    } 
+
+    // Return the payment links
+    res.status(200).send(invoices);
+  } catch (error) {
+    // Handle any errors that may occur
+    res.status(500).json({ message: error.message });
+  }
+});
+
+  // Controller function to get payment links by user ID
+  const getInvoiceById = asyncHandler(async (req, res) => {
+    const { invoiceId } = req.params;
+  
+    try {
+      // Fetch all payment links created by the specified user
+      const  invoice = await Invoice.findById(invoiceId).populate("customer").populate("userId");
+  
+      // If no payment links are found, return an empty array
+      if (! invoice) {
+        return res.status(404).json({ message: 'No invoices found for this user.' });
+      } 
+
+       
+  
+      // Return the payment links
+      res.status(200).json({invoices});
+    } catch (error) {
+      // Handle any errors that may occur
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+
+  // @desc    Initiate transaction session
+// @route   POST /api/payment/initiate-session
+// @access  Public
+const initiatePaymentSession = asyncHandler(async (req, res) => {
+  const io = req.app.get('socketio');
+
+  const {invoiceId}  = req.params
+
+  const invoice = await Invoice.findById( invoiceId );
+
+    if(! invoice){
+      res.status(400).json({message : "no session found"})
+
+      throw new Error("No session found")
+    }
+
+    io.emit('invoiceStatus', {
+      status : "PENDING",
+      sessionId : invoiceId
+    });
+
+
+  res.status(201).json({
+    message: 'invoice session initiated',
+    sessionId,
+  });
+});
+
+
+
+
+
+// @desc    Handle checkout and payment
+// @route   POST /api/payment/checkout/:sessionId
+// @access  Public
+const handleCheckout = asyncHandler(async (req, res) => {
+const io = req.app.get('socketio');
+const { invoiceId } = req.params;
+const {
+  
+  transactionHash,
+  
+    
+     
+  } = req.body;
+
+
+const invoice = await Invoice.findById(invoiceId).populate("userId");
+
+if (!invoice) {
+  res.status(404);
+  throw new Error('Payment session not found');
+}
+
+
+if(! transactionHash){
+  io.emit('paymentStatus', {
+    status : "FAILED",
+    sessionId : sessionId
+  });
+  res.status(400).json({message :  "Please provide transaction hash"})
+  throw  new Error("no transaction hash provided  please check blockchain status")
+ 
+}
+
+ // const  reciever  =  await User.findById(paymentSession.paymentLinkId.userId)
+
+ /// const user = await User.findById(paymentSession.paymentLinkId.userId);
+
+  
+
+
+
+     // UPDATE_USER_DETAILS_AND_TX_STATUS
+
+       // Find and update the PaymentSession document
+       const updatedInvoice = await Invoice.findByIdAndUpdate(
+        invoiceId,
+        {    status : "paid", txHash : transactionHash },
+        { new: true } // Return the updated document
+    );
+
+
+     // console.log("updated payment  info and status", updatedPaymentSession)
+
+
+
+// Monitor transaction status
+const interval = setInterval(async () => {
+  //const status = await checkTransactionStatus(transactionHash);
+
+   // Step 1: Replace @ with -
+   let formattedTxId = transactionHash.replace('@', '-');
+
+   // Step 2: Replace only the dots after the first two segments with hyphens
+   formattedTxId = formattedTxId.replace(/^([^.]+\.[^.]+)\.(.*)$/, function(_, p1, p2) {
+     return `${p1}.${p2.replace(/\./g, '-')}`;
+   });
+   
+     const  txResult  =  await  checkTxStatus(transactionHash)
+    console.log("the result status",  txResult)
+    console.log("transaction hash", transactionHash)
+
+  if (txResult === 'SUCCESS') {
+   
+
+    
+
+    // Notify user via email
+
+    const  OTP_TEMPLATE_UUID  = "7e201329-33cf-49cd-b879-69255081bd6f"
+
+    const recipients = [
+     {
+       email: user.email,
+     }
+   ];
+ 
+   await sendMail2(recipients, OTP_TEMPLATE_UUID, {
+    "amount": paymentSession.amount,
+    "currency": "HBAR",
+    "transaction_id": paymentSession.sessionId,
+    "payment_link": paymentSession.paymentLinkId,
+    "receiver_wallet": user.wallet,
+   });
+
+     // UPDATE_USER_DETAILS_AND_TX_STATUS
+
+       // Find and update the PaymentSession document
+       const updatedPaymentSession = await PaymentSession.findOneAndUpdate(
+        { sessionId },
+        { payerEmail, payerName, payerAddress,   paymentStatus : "completed" },
+        { new: true } // Return the updated document
+    );
+
+
+
+      //console.log("updated payment  info and status", updatedPaymentSession)
+      clearInterval(interval);
+
+    io.emit('paymentStatus', {
+      status :  "COMPLETED",
+      sessionId : sessionId
+    });
+
+    // Notify user via UI (e.g., via WebSocket or an update endpoint)
+    // ... your notification logic here ...
+  } else if (txResult === 'FAILED') { 
+  
+
+    
+
+    // Notify user via email
+   /* await sendEmail(
+      user.email,
+      'Payment Failed',
+      `Your payment of ${paymentSession.amount} has failed. Please try again.`
+    );*/
+
+
+          // UPDATE_USER_DETAILS_AND_TX_STATUS
+
+       // Find and update the PaymentSession document
+       const updatedPaymentSession = await PaymentSession.findOneAndUpdate(
+        { sessionId },
+        { payerEmail, payerName, payerAddress,   paymentStatus : "failed" },
+        { new: true } // Return the updated document
+    );
+
+    clearInterval(interval);
+    // Notify user via UI (e.g., via WebSocket or an update endpoint)
+    // ... your notification logic here ...
+    io.emit('paymentStatus', {
+      status : "FAILED",
+      sessionId : sessionId
+    });
+  }else if(new Date()   > paymentSession.durationTime  && paymentSession.paymentStatus === "pending" ){
+
+       // UPDATE_USER_DETAILS_AND_TX_STATUS
+
+       // Find and update the PaymentSession document
+       const updatedPaymentSession = await PaymentSession.findOneAndUpdate(
+        { sessionId },
+        { payerEmail, payerName, payerAddress,   paymentStatus : "expired" },
+        { new: true } // Return the updated document
+    );
+    clearInterval(interval);
+    // Notify user via UI (e.g., via WebSocket or an update endpoint)
+    // ... your notification logic here ...
+    io.emit('paymentStatus', {
+      status : "EXPIRED",
+      sessionId : sessionId
+    });
+
+  }
+}, 30000); // Check every 30 seconds  */
+
+
+//  console.log("payment session", paymentSession)
+
+
+res.status(200).json({ message: 'Payment processing initiated' });
+});
+
+  
+  module.exports = {
+    createInvoice,
+    getInvoicesByUserId,
+    getInvoiceById
+  };

@@ -52,6 +52,8 @@ io.on('connection', (socket) => {
 
 app.use("/auth", require("./routes/AuthRoute"));
 app.use("/pay", require("./routes/paymentRoute"));
+app.use("/customer", require("./routes/customer"));
+app.use("/invoice", require("./routes/invoice"));
 app.use("/emails", require("./routes/recieptRoute"));
 
 
