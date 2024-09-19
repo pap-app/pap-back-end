@@ -1,5 +1,13 @@
 const asyncHandler =  require("express-async-handler")
 const  Invoice  =  require("../model/invoice-schema")
+const { checkTxStatus } = require('../lib/CheckTxStatus');
+const {Network,Aptos, AptosConfig, convertAmountFromHumanReadableToOnChain}   =  require("@aptos-labs/ts-sdk");
+
+
+
+ // Setup the client
+ const config = new AptosConfig({ network: Network.TESTNET });
+ const aptos = new Aptos(config);
 
 
 // Helper function to generate unique invoice number
@@ -109,12 +117,12 @@ const getInvoicesByUserId = asyncHandler(async (req, res) => {
       // If no payment links are found, return an empty array
       if (! invoice) {
         return res.status(404).json({ message: 'No invoices found for this user.' });
-      } 
+      }
 
        
   
-      // Return the payment links
-      res.status(200).json({invoices});
+      // Return the invoice
+      res.status(200).json({invoice});
     } catch (error) {
       // Handle any errors that may occur
       res.status(500).json({ message: error.message });
@@ -140,19 +148,57 @@ const initiatePaymentSession = asyncHandler(async (req, res) => {
 
     io.emit('invoiceStatus', {
       status : "PENDING",
-      sessionId : invoiceId
+      invoiceId : invoiceId
     });
 
 
   res.status(201).json({
     message: 'invoice session initiated',
-    sessionId,
+    invoiceId,
   });
 });
 
 
 
 
+
+// @desc    Initiate blockchain tx
+// @route   POST /api/payment/invoice/buildtx
+// @access  Public
+const handleBuildTx = asyncHandler(async (req, res) => {
+  const { invoiceId } = req.params;
+  const { sender } = req.body;
+  
+  const invoice = await Invoice.findById(invoiceId).populate("userId");
+  if (!sender || !invoice) {
+    res.status(404).json({ message: "no user or sender wallet address" });
+    throw new Error("No sender and no user");
+  }
+
+  // RECIEVER PLACEHOLDER
+  const placeHolder = "0x09d29f0ec5b03fc73b59e35deb80356cde17b13b8db94ded34fc8130dc1da1d9";
+  
+  // Build the transaction
+  const transaction = await aptos.transaction.build.simple({
+    sender: sender,
+    data: {
+      // The Move entry-function
+      function: "0x1::aptos_account::transfer",
+      functionArguments: [placeHolder, convertAmountFromHumanReadableToOnChain(0.3, 8)],
+    },
+  });
+
+  console.log("transactions", transaction);
+
+  // Convert BigInt fields in the transaction to strings before sending the response
+  const transactionStringified = JSON.parse(
+    JSON.stringify(transaction, (key, value) =>
+      typeof value === "bigint" ? value.toString() : value
+    )
+  );
+
+  res.status(200).send(transactionStringified);
+});
 
 // @desc    Handle checkout and payment
 // @route   POST /api/payment/checkout/:sessionId
@@ -161,12 +207,9 @@ const handleCheckout = asyncHandler(async (req, res) => {
 const io = req.app.get('socketio');
 const { invoiceId } = req.params;
 const {
-  
-  transactionHash,
-  
-    
-     
-  } = req.body;
+  txHash,
+  senderWallet
+   } = req.body;
 
 
 const invoice = await Invoice.findById(invoiceId).populate("userId");
@@ -177,10 +220,10 @@ if (!invoice) {
 }
 
 
-if(! transactionHash){
-  io.emit('paymentStatus', {
+if(! txHash){
+  io.emit('invoiceStatus', {
     status : "FAILED",
-    sessionId : sessionId
+    invoiceId : invoiceId
   });
   res.status(400).json({message :  "Please provide transaction hash"})
   throw  new Error("no transaction hash provided  please check blockchain status")
@@ -200,7 +243,7 @@ if(! transactionHash){
        // Find and update the PaymentSession document
        const updatedInvoice = await Invoice.findByIdAndUpdate(
         invoiceId,
-        {    status : "paid", txHash : transactionHash },
+        {    status : "PENDING", txHash : txHash },
         { new: true } // Return the updated document
     );
 
@@ -211,23 +254,13 @@ if(! transactionHash){
 
 // Monitor transaction status
 const interval = setInterval(async () => {
-  //const status = await checkTransactionStatus(transactionHash);
-
-   // Step 1: Replace @ with -
-   let formattedTxId = transactionHash.replace('@', '-');
-
-   // Step 2: Replace only the dots after the first two segments with hyphens
-   formattedTxId = formattedTxId.replace(/^([^.]+\.[^.]+)\.(.*)$/, function(_, p1, p2) {
-     return `${p1}.${p2.replace(/\./g, '-')}`;
-   });
    
-     const  txResult  =  await  checkTxStatus(transactionHash)
+     const  txResult  =  await  checkTxStatus(txHash)
     console.log("the result status",  txResult)
-    console.log("transaction hash", transactionHash)
+    console.log("transaction hash", txHash)
 
   if (txResult === 'SUCCESS') {
    
-
     
 
     // Notify user via email
@@ -236,86 +269,62 @@ const interval = setInterval(async () => {
 
     const recipients = [
      {
-       email: user.email,
+       email: "kabuguabdul2@gmail.com",
      }
    ];
  
-   await sendMail2(recipients, OTP_TEMPLATE_UUID, {
+   /*await sendMail2(recipients, OTP_TEMPLATE_UUID, {
     "amount": paymentSession.amount,
     "currency": "HBAR",
     "transaction_id": paymentSession.sessionId,
     "payment_link": paymentSession.paymentLinkId,
-    "receiver_wallet": user.wallet,
-   });
+    "receiver_wallet": "my_wallet",
+   });*/
 
-     // UPDATE_USER_DETAILS_AND_TX_STATUS
+  // UPDATE_USER_DETAILS_AND_TX_STATUS
 
        // Find and update the PaymentSession document
-       const updatedPaymentSession = await PaymentSession.findOneAndUpdate(
-        { sessionId },
-        { payerEmail, payerName, payerAddress,   paymentStatus : "completed" },
+       const updatedInvoice = await Invoice.findByIdAndUpdate(
+        invoiceId,
+        {    status : "paid", txHash, senderWallet },
         { new: true } // Return the updated document
     );
-
 
 
       //console.log("updated payment  info and status", updatedPaymentSession)
       clearInterval(interval);
 
-    io.emit('paymentStatus', {
+    io.emit('invoiceStatus', {
       status :  "COMPLETED",
-      sessionId : sessionId
+       invoiceId : invoiceId,
+       txHash : txHash,
+       amount :  invoice.subtotal,
+       sender : senderWallet
     });
 
     // Notify user via UI (e.g., via WebSocket or an update endpoint)
     // ... your notification logic here ...
   } else if (txResult === 'FAILED') { 
-  
-
-    
-
-    // Notify user via email
-   /* await sendEmail(
-      user.email,
-      'Payment Failed',
-      `Your payment of ${paymentSession.amount} has failed. Please try again.`
-    );*/
-
 
           // UPDATE_USER_DETAILS_AND_TX_STATUS
 
-       // Find and update the PaymentSession document
-       const updatedPaymentSession = await PaymentSession.findOneAndUpdate(
-        { sessionId },
-        { payerEmail, payerName, payerAddress,   paymentStatus : "failed" },
-        { new: true } // Return the updated document
-    );
+          // Find and update the PaymentSession document
+          const updatedInvoice = await Invoice.findByIdAndUpdate(
+            invoiceId,
+            {    status : "failed", txHash : txHash },
+            { new: true } // Return the updated document
+        );
 
     clearInterval(interval);
     // Notify user via UI (e.g., via WebSocket or an update endpoint)
     // ... your notification logic here ...
-    io.emit('paymentStatus', {
+    io.emit('invoiceStatus', {
       status : "FAILED",
-      sessionId : sessionId
+      invoiceId : invoiceId,
+      txHash : txHash,
+      amount :  invoice.subtotal,
+      sender : senderWallet
     });
-  }else if(new Date()   > paymentSession.durationTime  && paymentSession.paymentStatus === "pending" ){
-
-       // UPDATE_USER_DETAILS_AND_TX_STATUS
-
-       // Find and update the PaymentSession document
-       const updatedPaymentSession = await PaymentSession.findOneAndUpdate(
-        { sessionId },
-        { payerEmail, payerName, payerAddress,   paymentStatus : "expired" },
-        { new: true } // Return the updated document
-    );
-    clearInterval(interval);
-    // Notify user via UI (e.g., via WebSocket or an update endpoint)
-    // ... your notification logic here ...
-    io.emit('paymentStatus', {
-      status : "EXPIRED",
-      sessionId : sessionId
-    });
-
   }
 }, 30000); // Check every 30 seconds  */
 
@@ -330,5 +339,8 @@ res.status(200).json({ message: 'Payment processing initiated' });
   module.exports = {
     createInvoice,
     getInvoicesByUserId,
-    getInvoiceById
+    getInvoiceById,
+    handleCheckout,
+    initiatePaymentSession,
+    handleBuildTx
   };

@@ -45,6 +45,9 @@ const invoiceSchema = new mongoose.Schema({
   txHash: {
     type: String,
   },
+  senderWallet: {
+    type: String,
+  },
   totalAmount: {
     type: Number,
     required: false,

@@ -1,5 +1,5 @@
 const express =  require("express")
-const { createInvoice, getInvoicesByUserId, getInvoiceById } = require("../controller/invoice")
+const { createInvoice, getInvoicesByUserId, getInvoiceById, initiatePaymentSession, handleCheckout, handleBuildTx } = require("../controller/invoice")
 
 
  const  router =  express.Router()
@@ -7,6 +7,12 @@ const { createInvoice, getInvoicesByUserId, getInvoiceById } = require("../contr
  router.route("/create-invoice").post(createInvoice)
  router.route("/:userId/invoices").get(getInvoicesByUserId)
  router.route("/get-invoice/:invoiceId").get(getInvoiceById)
+ router.route("/initiate-payment/:invoiceId").post(initiatePaymentSession)
+ router.route("/check-out/:invoiceId").post(handleCheckout)
+ router.route("/build-tx/:invoiceId").post(handleBuildTx)
+
+
+
 
 
 
