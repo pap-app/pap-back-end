@@ -265,9 +265,16 @@ const handleCheckout = asyncHandler(async (req, res) => {
         //console.log("updated payment  info and status", updatedPaymentSession)
         clearInterval(interval);
 
-      io.emit('paymentStatus', {
+     /* io.emit('paymentStatus', {
         status :  "COMPLETED",
         sessionId : sessionId
+      });*/
+
+      io.emit('paymentStatus', {
+        status :  "COMPLETED",
+         sessionId : sessionId,
+         txHash : transactionHash,
+         amount :  paymentSession.amount,
       });
 
       // Notify user via UI (e.g., via WebSocket or an update endpoint)

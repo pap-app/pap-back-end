@@ -1,7 +1,9 @@
 const asyncHandler =  require("express-async-handler")
 const  Invoice  =  require("../model/invoice-schema")
+const Customer =  require("../model/customer-schema")
 const { checkTxStatus } = require('../lib/CheckTxStatus');
 const {Network,Aptos, AptosConfig, convertAmountFromHumanReadableToOnChain}   =  require("@aptos-labs/ts-sdk");
+const { sendMail2 } = require("../helper/sendEmail");
 
 
 
@@ -43,6 +45,10 @@ const generateInvoiceNumber = async () => {
         return res.status(400).json({ message: 'All required fields must be filled.' });
       }
   
+      //  Get  Customer
+
+      const customerEmail  =  await Customer.findById(customer)
+      console.log("cutsomer", customerEmail)
       // Generate unique invoice number
       const invoiceNumber = await generateInvoiceNumber();
   
@@ -73,7 +79,26 @@ const generateInvoiceNumber = async () => {
   
       // Save the invoice to the database
       await newInvoice.save();
-  
+      //  OTP  EMAIL TEMPLATE
+      console.log("receipient", customerEmail?.customerEmail)
+   
+        const  OTP_TEMPLATE_UUID  = "7e201329-33cf-49cd-b879-69255081bd6f"
+      const recipients = [
+        {
+          email: customerEmail.customerEmail,
+        }
+      ];
+       
+      // SEND  AN INVOICE
+
+      await sendMail2(recipients, OTP_TEMPLATE_UUID, {
+        "amount": "1",
+        "currency": "HBAR",
+        "transaction_id": "Just testing invoice automatin",
+        "payment_link": "This is testing link",
+        "receiver_wallet": "No wallet bro",
+       });
+
       // Send success response
       return res.status(201).json({
         message: 'Invoice created successfully!',
@@ -335,6 +360,11 @@ const interval = setInterval(async () => {
 res.status(200).json({ message: 'Payment processing initiated' });
 });
 
+
+const getCustomerById = asyncHandler (async (req, res)  =>  {
+   const customer  =  await Customer.findById("66deac9be3e025554a07c0ec")
+   res.status(200).json({customer})
+})
   
   module.exports = {
     createInvoice,
@@ -342,5 +372,6 @@ res.status(200).json({ message: 'Payment processing initiated' });
     getInvoiceById,
     handleCheckout,
     initiatePaymentSession,
-    handleBuildTx
+    handleBuildTx,
+    getCustomerById
   };
